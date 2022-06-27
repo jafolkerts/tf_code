@@ -1,3 +1,25 @@
+variable "whitelist" {
+  type = list (string)
+}
+variable "web_image_id" {
+  type = string
+}
+
+variable "web_instance_type" {
+  type = string
+}
+
+variable "web_desired_capacity" {
+  type = number
+}
+
+variable "web_max_size" {
+  type = number
+}
+variable "web_min_size" {
+  type = number
+}
+
 provider "aws" {
   profile = "default"
   region  = "us-east-1"
@@ -5,6 +27,10 @@ provider "aws" {
 
 resource "aws_s3_bucket" "prod_tf_course" {
   bucket = "tf-course-jafolkerts"
+
+  tags = {
+    "Terramform" : "true"
+  }
 }
 
 resource "aws_s3_bucket_acl" "tf_course_acl" {
@@ -13,3 +39,99 @@ resource "aws_s3_bucket_acl" "tf_course_acl" {
 }
 
 resource "aws_default_vpc" "default" {}
+
+resource "aws_default_subnet" "default_az1" {
+  availability_zone = "us-east-1a"
+
+  tags = {
+    "Terramform" : "true"
+  }
+}
+
+resource "aws_default_subnet" "default_az2" {
+  availability_zone = "us-east-1b"
+
+  tags = {
+    "Terramform" : "true"
+  }
+}
+
+resource "aws_security_group" "prod_web" {
+  name        = "prod_web"
+  description = "Allow standard http and https ports inbound and everything outbound"
+
+  ingress {
+    from_port   = 80 # Range start
+    to_port     = 80 # Range stop
+    protocol    = "tcp"
+    cidr_blocks = var.whitelist 
+  }
+  ingress {
+    from_port   = 443 # Range start
+    to_port     = 443 # Range stop
+    protocol    = "tcp"
+    cidr_blocks = var.whitelist 
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0    # Allows all ports
+    protocol    = "-1" # Allows all protocols
+    cidr_blocks = var.whitelist 
+  }
+
+  tags = {
+    "Terramform" : "true"
+  }
+}
+
+resource "aws_elb" "prod_web" {
+  name = "prod-web"
+  #  instances       = aws_instance.prod_web[*].id
+  subnets         = [aws_default_subnet.default_az1.id, aws_default_subnet.default_az2.id]
+  security_groups = [aws_security_group.prod_web.id]
+
+  listener {
+    instance_port     = 80
+    instance_protocol = "http"
+    lb_port           = 80
+    lb_protocol       = "http"
+  }
+
+  tags = {
+    "Terramform" : "true"
+  }
+}
+
+resource "aws_launch_template" "prod_web" {
+  name_prefix   = "prod-web"
+  image_id      = var.web_image_id
+  instance_type = var.web_instance_type
+
+  tags = {
+    "Terramform" : "true"
+  }
+}
+
+resource "aws_autoscaling_group" "prod_web" {
+  desired_capacity    = var.web_desired_capacity
+  max_size            = var.web_max_size
+  min_size            = var.web_min_size
+  vpc_zone_identifier = [aws_default_subnet.default_az1.id, aws_default_subnet.default_az2.id]
+
+  launch_template {
+    id      = aws_launch_template.prod_web.id
+    version = "$Latest"
+  }
+
+  tag {
+    key                 = "Terraform"
+    value               = "true"
+    propagate_at_launch = true
+  }
+}
+
+resource "aws_autoscaling_attachment" "prod_web" {
+  autoscaling_group_name = aws_autoscaling_group.prod_web.id
+  elb                    = aws_elb.prod_web.id
+}
